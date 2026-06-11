@@ -51,4 +51,69 @@ class AuditController extends Controller
 
         return view('audit.trashed-transactions', compact('transactions', 'branches'));
     }
+    /**
+     * Restore a soft deleted transaction.
+     */
+    public function restoreTransaction($id)
+    {
+        try {
+            $user = Auth::user();
+
+            $transaction = Transaction::withTrashed()->findOrFail($id);
+
+            if ($transaction->status !== 'cancelled') {
+                return response()->json(['error' => 'Transaksi tidak dapat dikembalikan'], 400);
+            }
+
+            DB::beginTransaction();
+
+            // Cek stok sebelum restore
+            foreach ($transaction->details as $detail) {
+                $product = $detail->product;
+
+                // Cek apakah produk masih ada
+                if (!$product) {
+                    throw new \Exception("Produk dengan ID {$detail->product_id} tidak ditemukan");
+                }
+
+                // Cek apakah stok cukup untuk dikurangi kembali
+                if ($product->stock < $detail->quantity) {
+                    throw new \Exception("Stok produk {$product->name} tidak mencukupi untuk mengembalikan transaksi");
+                }
+
+                $product->updateStock(
+                    $detail->quantity,
+                    'out',
+                    $user->id,
+                    "Pengembalian transaksi (restore): {$transaction->invoice_number}"
+                );
+            }
+
+            // Restore transaction (mengisi ulang deleted_at = null)
+            $transaction->restore();
+            $transaction->update([
+                'status' => 'completed',
+                'deleted_by' => null,
+                'delete_reason' => null,
+            ]);
+
+            DB::commit();
+
+            Log::info('Transaction restored', [
+                'transaction_id' => $transaction->id,
+                'invoice_number' => $transaction->invoice_number,
+                'restored_by' => $user->id,
+                'restored_by_name' => $user->name
+            ]);
+
+            return response()->json(['success' => true, 'message' => 'Transaksi berhasil dikembalikan']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to restore transaction', [
+                'transaction_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
 }
