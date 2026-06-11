@@ -106,3 +106,25 @@ button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+.relative-time-cell {
+    cursor: help;
+    transition: background-color 0.2s;
+}
+
+.relative-time-cell:hover {
+    background-color: #f3f4f6;
+}
+
+@keyframes timeUpdate {
+    0% {
+        opacity: 0.5;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+.time-updated {
+    animation: timeUpdate 0.3s ease;
+}
