@@ -166,4 +166,19 @@ class DashboardController extends Controller
             'totalStockValue'
         ));
     }
+
+    /**
+     * Calculate percentage trend between two values
+     */
+    private function calculateTrend($current, $previous)
+    {
+        if ($previous == 0) {
+            return $current > 0 ? '+100%' : '0%';
+        }
+
+        $percentage = (($current - $previous) / $previous) * 100;
+        $sign = $percentage >= 0 ? '+' : '';
+
+        return $sign . round($percentage, 1) . '%';
+    }
 }
