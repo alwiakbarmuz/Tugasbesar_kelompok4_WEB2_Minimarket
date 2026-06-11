@@ -147,4 +147,104 @@ class AuditController extends Controller
             return response()->json(['error' => $e->getMessage()], 500);
         }
     }
+    /**
+     * Display trashed products (soft deleted).
+     */
+    public function trashedProducts(Request $request)
+    {
+        $query = Product::onlyTrashed()
+            ->with(['branch', 'deletedBy'])
+            ->orderBy('deleted_at', 'desc');
+
+        if ($request->filled('branch_id')) {
+            $query->where('branch_id', $request->branch_id);
+        }
+
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('barcode', 'like', "%{$search}%");
+            });
+        }
+
+        $products = $query->paginate(20);
+        $branches = Branch::all();
+
+        return view('audit.trashed-products', compact('products', 'branches'));
+    }
+
+    /**
+     * Restore a soft deleted product.
+     */
+    public function restoreProduct($id)
+    {
+        try {
+            $user = Auth::user();
+
+            $product = Product::withTrashed()->findOrFail($id);
+            $productName = $product->name;
+
+            // Cek apakah produk yang di-restore sudah pernah bertransaksi?
+            $hasTransactions = $product->transactionDetails()->exists();
+
+            // Restore product (mengisi deleted_at = null)
+            $product->restore();
+
+            // Hapus tanda deleted_by jika ada
+            $product->deleted_by = null;
+            $product->save();
+
+            Log::info('Product restored', [
+                'product_id' => $product->id,
+                'product_name' => $productName,
+                'restored_by' => $user->id,
+                'restored_by_name' => $user->name,
+                'had_transactions' => $hasTransactions
+            ]);
+
+            return response()->json(['success' => true, 'message' => "Produk {$productName} berhasil dikembalikan"]);
+        } catch (\Exception $e) {
+            Log::error('Failed to restore product', [
+                'product_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Permanently delete a product (force delete).
+     */
+    public function forceDeleteProduct($id)
+    {
+        try {
+            $user = Auth::user();
+
+            $product = Product::withTrashed()->findOrFail($id);
+            $productName = $product->name;
+
+            // Log sebelum hapus permanen
+            Log::warning('Permanent deletion of product', [
+                'product_id' => $product->id,
+                'product_name' => $productName,
+                'barcode' => $product->barcode,
+                'deleted_by' => $user->id,
+                'deleted_by_name' => $user->name,
+                'original_deleted_at' => $product->deleted_at,
+                'stock' => $product->stock,
+                'branch_id' => $product->branch_id
+            ]);
+
+            $product->forceDelete();
+
+            return response()->json(['success' => true, 'message' => "Produk {$productName} telah dihapus permanen"]);
+        } catch (\Exception $e) {
+            Log::error('Failed to force delete product', [
+                'product_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
 }
