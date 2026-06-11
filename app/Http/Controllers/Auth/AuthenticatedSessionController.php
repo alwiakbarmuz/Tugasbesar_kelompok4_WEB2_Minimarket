@@ -26,9 +26,17 @@ class AuthenticatedSessionController extends Controller
     {
         $request->authenticate();
 
+        // Cek apakah user wajib ganti password
+        $user = Auth::user();
+
+        if ($user->must_change_password) {
+            return redirect()->route('profile.edit')
+                ->with('warning', 'Silakan ganti password default Anda sebelum melanjutkan.');
+        }
+
         $request->session()->regenerate();
 
-        return redirect()->intended(route('dashboard', absolute: false));
+        return redirect()->intended(route('dashboard'));
     }
 
     /**
@@ -42,6 +50,6 @@ class AuthenticatedSessionController extends Controller
 
         $request->session()->regenerateToken();
 
-        return redirect('/');
+        return redirect('/login');
     }
 }
