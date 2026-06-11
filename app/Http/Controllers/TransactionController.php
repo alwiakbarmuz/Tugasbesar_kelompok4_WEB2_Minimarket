@@ -440,4 +440,112 @@ class TransactionController extends Controller
                 ->with('error', 'Gagal membatalkan transaksi: ' . $e->getMessage());
         }
     }
+
+    /**
+     * Restore a cancelled transaction (admin only).
+     */
+    public function restore($id)
+    {
+        $user = Auth::user();
+
+        // Only owner can restore
+        if (!$user->hasRole('owner')) {
+            abort(403, 'Hanya owner yang dapat mengembalikan transaksi');
+        }
+
+        $transaction = Transaction::withTrashed()->findOrFail($id);
+
+        if ($transaction->status !== 'cancelled') {
+            return redirect()->back()->with('error', 'Transaksi tidak dapat dikembalikan');
+        }
+
+        DB::beginTransaction();
+
+        try {
+            // Deduct stock again
+            foreach ($transaction->details as $detail) {
+                $product = $detail->product;
+                $product->updateStock(
+                    $detail->quantity,
+                    'out',
+                    $user->id,
+                    "Pengembalian transaksi: {$transaction->invoice_number}"
+                );
+            }
+
+            // Restore transaction
+            $transaction->restore();
+            $transaction->update([
+                'status' => 'completed',
+                'deleted_by' => null,
+                'delete_reason' => null,
+            ]);
+
+            DB::commit();
+
+            return redirect()->route('transactions.index')
+                ->with('success', "Transaksi {$transaction->invoice_number} berhasil dikembalikan");
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return redirect()->back()->with('error', 'Gagal mengembalikan transaksi: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Permanently delete a transaction (admin only).
+     */
+    public function forceDelete($id)
+    {
+        $user = Auth::user();
+
+        // Only owner can force delete
+        if (!$user->hasRole('owner')) {
+            abort(403);
+        }
+
+        $transaction = Transaction::withTrashed()->findOrFail($id);
+
+        // Log before permanent deletion
+        \Log::warning('Permanent deletion of transaction', [
+            'transaction_id' => $transaction->id,
+            'invoice_number' => $transaction->invoice_number,
+            'deleted_by' => $user->id,
+            'deleted_by_name' => $user->name,
+            'original_deleted_at' => $transaction->deleted_at,
+            'delete_reason' => $transaction->delete_reason,
+        ]);
+
+        $transaction->forceDelete();
+
+        return redirect()->route('transactions.index')
+            ->with('warning', "Transaksi {$transaction->invoice_number} telah dihapus permanen dari sistem");
+    }
+
+    /**
+     * Get product details for POS (AJAX).
+     */
+    public function getProduct($barcode)
+    {
+        $user = Auth::user();
+
+        $product = Product::where('barcode', $barcode)
+            ->where('branch_id', $user->branch_id)
+            ->first();
+
+        if (!$product) {
+            return response()->json(['error' => 'Produk tidak ditemukan'], 404);
+        }
+
+        if ($product->stock <= 0) {
+            return response()->json(['error' => 'Produk sedang habis'], 422);
+        }
+
+        return response()->json([
+            'id' => $product->id,
+            'name' => $product->name,
+            'price' => $product->price,
+            'stock' => $product->stock,
+            'unit' => $product->unit,
+        ]);
+    }
 }
