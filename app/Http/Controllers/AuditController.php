@@ -116,4 +116,35 @@ class AuditController extends Controller
             return response()->json(['error' => $e->getMessage()], 500);
         }
     }
+    
+    /**
+     * Permanently delete a transaction (force delete).
+     */
+    public function forceDeleteTransaction($id)
+    {
+        try {
+            $transaction = Transaction::withTrashed()->findOrFail($id);
+            $invoiceNumber = $transaction->invoice_number;
+
+            // Log sebelum hapus permanen
+            Log::warning('Permanent deletion of transaction', [
+                'transaction_id' => $transaction->id,
+                'invoice_number' => $invoiceNumber,
+                'deleted_by' => Auth::user()->id,
+                'deleted_by_name' => Auth::user()->name,
+                'original_deleted_at' => $transaction->deleted_at,
+                'delete_reason' => $transaction->delete_reason,
+            ]);
+
+            $transaction->forceDelete();
+
+            return response()->json(['success' => true, 'message' => "Transaksi {$invoiceNumber} telah dihapus permanen"]);
+        } catch (\Exception $e) {
+            Log::error('Failed to force delete transaction', [
+                'transaction_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
 }
