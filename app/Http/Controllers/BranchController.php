@@ -157,4 +157,243 @@ class BranchController extends Controller
                 ->withInput();
         }
     }
+
+    /**
+     * Generate default accounts for a new branch.
+     */
+    private function generateBranchAccounts(Branch $branch)
+    {
+        $defaultPassword = 'password123';
+
+        // Data akun default per cabang
+        $accounts = [
+            [
+                'name' => "Manager {$branch->name}",
+                'email' => "manager.{$branch->code}@minimarket.com",
+                'role' => 'manager',
+            ],
+            [
+                'name' => "Supervisor {$branch->name}",
+                'email' => "supervisor.{$branch->code}@minimarket.com",
+                'role' => 'supervisor',
+            ],
+            [
+                'name' => "Warehouse {$branch->name}",
+                'email' => "warehouse.{$branch->code}@minimarket.com",
+                'role' => 'warehouse',
+            ],
+            [
+                'name' => "Cashier 1 {$branch->name}",
+                'email' => "cashier1.{$branch->code}@minimarket.com",
+                'role' => 'cashier',
+            ],
+            [
+                'name' => "Cashier 2 {$branch->name}",
+                'email' => "cashier2.{$branch->code}@minimarket.com",
+                'role' => 'cashier',
+            ],
+        ];
+
+        foreach ($accounts as $account) {
+            $user = User::create([
+                'name' => $account['name'],
+                'email' => $account['email'],
+                'password' => Hash::make($defaultPassword),
+                'branch_id' => $branch->id,
+                'email_verified_at' => now(),
+                'must_change_password' => true,
+            ]);
+
+            $user->assignRole($account['role']);
+        }
+    }
+
+    /**
+     * Display specific branch details.
+     */
+    public function show(Branch $branch)
+    {
+        // Statistics
+        $stats = [
+            'products_count' => Product::where('branch_id', $branch->id)->count(),
+            'employees_count' => User::where('branch_id', $branch->id)->count(),
+            'transactions_count' => Transaction::where('branch_id', $branch->id)->count(),
+            'total_revenue' => Transaction::where('branch_id', $branch->id)->sum('total'),
+            'revenue_today' => Transaction::where('branch_id', $branch->id)
+                ->whereDate('transaction_date', today())
+                ->sum('total'),
+            'transactions_today' => Transaction::where('branch_id', $branch->id)
+                ->whereDate('transaction_date', today())
+                ->count(),
+            'avg_transaction' => Transaction::where('branch_id', $branch->id)->avg('total') ?? 0,
+        ];
+
+        // Get users in this branch
+        $users = User::where('branch_id', $branch->id)
+            ->with('roles')
+            ->get();
+
+        // Recent transactions
+        $recentTransactions = Transaction::where('branch_id', $branch->id)
+            ->with('cashier')
+            ->latest()
+            ->take(10)
+            ->get();
+
+        // Low stock products
+        $lowStockProducts = Product::where('branch_id', $branch->id)
+            ->whereRaw('stock <= min_stock')
+            ->take(10)
+            ->get();
+
+        // Monthly chart data
+        $monthlyData = [];
+        for ($i = 11; $i >= 0; $i--) {
+            $date = now()->subMonths($i);
+            $monthlyData['labels'][] = $date->format('M Y');
+            $monthlyData['revenue'][] = Transaction::where('branch_id', $branch->id)
+                ->whereYear('transaction_date', $date->year)
+                ->whereMonth('transaction_date', $date->month)
+                ->sum('total');
+        }
+
+        return view('branches.show', compact('branch', 'stats', 'users', 'recentTransactions', 'lowStockProducts', 'monthlyData'));
+    }
+
+    /**
+     * Show form to edit branch.
+     */
+    public function edit(Branch $branch)
+    {
+        return view('branches.edit', compact('branch'));
+    }
+
+    /**
+     * Update the specified branch.
+     */
+    public function update(Request $request, Branch $branch)
+    {
+        $validated = $request->validate([
+            'code' => ['required', 'string', 'max:20', Rule::unique('branches')->ignore($branch->id)],
+            'name' => 'required|string|max:100',
+            'city' => 'required|string|max:50',
+            'address' => 'required|string',
+            'phone' => 'required|string|max:20',
+            'is_active' => 'boolean',
+        ]);
+
+        $validated['is_active'] = $request->has('is_active');
+
+        DB::beginTransaction();
+
+        try {
+            $oldName = $branch->name;
+            $branch->update($validated);
+
+            // If branch name changed, update related account names
+            if ($oldName != $branch->name) {
+                $this->updateAccountNames($branch);
+            }
+
+            DB::commit();
+
+            return redirect()->route('branches.index')
+                ->with('success', "Cabang {$branch->name} berhasil diupdate");
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return redirect()->back()
+                ->with('error', 'Gagal update cabang: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Update account names when branch name changes.
+     */
+    private function updateAccountNames(Branch $branch)
+    {
+        $users = User::where('branch_id', $branch->id)->get();
+
+        foreach ($users as $user) {
+            $role = $user->roles->first()->name ?? 'staff';
+
+            if ($role === 'cashier') {
+                preg_match('/Cashier (\d+)/', $user->name, $matches);
+                $number = $matches[1] ?? '1';
+                $newName = "Cashier {$number} {$branch->name}";
+            } else {
+                $newName = ucfirst($role) . " {$branch->name}";
+            }
+
+            $user->update(['name' => $newName]);
+        }
+    }
+
+    /**
+     * Delete the specified branch and its associated accounts.
+     */
+    public function destroy(Branch $branch)
+    {
+        // Check if branch has any transactions
+        $hasTransactions = Transaction::where('branch_id', $branch->id)->exists();
+        $hasProducts = Product::where('branch_id', $branch->id)->exists();
+
+        if ($hasTransactions || $hasProducts) {
+            return redirect()->route('branches.index')
+                ->with('error', "Cabang {$branch->name} tidak dapat dihapus karena masih memiliki data transaksi atau produk");
+        }
+
+        DB::beginTransaction();
+
+        try {
+            // Delete all users in this branch
+            User::where('branch_id', $branch->id)->delete();
+
+            // Delete branch
+            $branchName = $branch->name;
+            $branch->delete();
+
+            DB::commit();
+
+            return redirect()->route('branches.index')
+                ->with('success', "Cabang {$branchName} beserta semua akun karyawan berhasil dihapus");
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return redirect()->back()
+                ->with('error', 'Gagal menghapus cabang: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Toggle branch active status.
+     */
+    public function toggleStatus(Branch $branch)
+    {
+        $branch->update(['is_active' => !$branch->is_active]);
+
+        $status = $branch->is_active ? 'diaktifkan' : 'dinonaktifkan';
+
+        return redirect()->back()
+            ->with('success', "Cabang {$branch->name} berhasil {$status}");
+    }
+
+    /**
+     * Reset all passwords for a branch.
+     */
+    public function resetBranchPasswords(Branch $branch)
+    {
+        $defaultPassword = 'password123';
+        $users = User::where('branch_id', $branch->id)->get();
+
+        $count = 0;
+        foreach ($users as $user) {
+            $user->update([
+                'password' => Hash::make($defaultPassword),
+                'must_change_password' => true,
+            ]);
+            $count++;
+        }
+
+        return redirect()->back()
+            ->with('success', "Password {$count} akun di cabang {$branch->name} telah direset ke: {$defaultPassword}");
+    }
 }
