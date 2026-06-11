@@ -205,4 +205,59 @@ class ProductController extends Controller
         return redirect()->route('products.index')
             ->with('success', "Produk {$product->name} berhasil dihapus");
     }
+
+    /**
+     * Restore a soft deleted product.
+     */
+    public function restore($id)
+    {
+        $user = Auth::user();
+
+        if (!$user->hasRole('owner')) {
+            abort(403);
+        }
+
+        $product = Product::withTrashed()->findOrFail($id);
+        $product->restore();
+
+        return redirect()->route('products.index')
+            ->with('success', "Produk {$product->name} berhasil dikembalikan");
+    }
+
+    /**
+     * Permanently delete a product (admin only).
+     */
+    public function forceDelete($id)
+    {
+        $user = Auth::user();
+
+        if (!$user->hasRole('owner')) {
+            abort(403);
+        }
+
+        $product = Product::withTrashed()->findOrFail($id);
+        $productName = $product->name;
+        $product->forceDelete();
+
+        return redirect()->route('products.index')
+            ->with('warning', "Produk {$productName} telah dihapus permanen dari sistem");
+    }
+
+    /**
+     * List soft deleted products.
+     */
+    public function trashed()
+    {
+        $user = Auth::user();
+
+        $query = Product::onlyTrashed()->with(['branch', 'deletedBy']);
+
+        if (!$user->hasRole('owner')) {
+            $query->where('branch_id', $user->branch_id);
+        }
+
+        $products = $query->orderBy('deleted_at', 'desc')->paginate(20);
+
+        return view('products.trashed', compact('products'));
+    }
 }
