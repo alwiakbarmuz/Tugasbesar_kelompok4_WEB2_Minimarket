@@ -238,4 +238,206 @@ class TransactionController extends Controller
                 ->withInput();
         }
     }
+
+    /**
+     * Add item to cart (AJAX for POS system).
+     */
+    public function addToCart(Request $request)
+    {
+        $request->validate([
+            'product_id' => 'required|exists:products,id',
+            'quantity' => 'required|integer|min:1',
+        ]);
+
+        $user = Auth::user();
+        $product = Product::where('id', $request->product_id)
+            ->where('branch_id', $user->branch_id)
+            ->firstOrFail();
+
+        if ($product->stock < $request->quantity) {
+            return response()->json([
+                'error' => "Stok tidak mencukupi. Tersedia: {$product->stock}"
+            ], 422);
+        }
+
+        $cart = session()->get('cart', []);
+
+        if (isset($cart[$product->id])) {
+            $cart[$product->id]['quantity'] += $request->quantity;
+        } else {
+            $cart[$product->id] = [
+                'product_id' => $product->id,
+                'name' => $product->name,
+                'price' => $product->price,
+                'quantity' => $request->quantity,
+                'subtotal' => $product->price * $request->quantity,
+            ];
+        }
+
+        // Recalculate subtotal
+        $cart[$product->id]['subtotal'] = $cart[$product->id]['price'] * $cart[$product->id]['quantity'];
+
+        session()->put('cart', $cart);
+
+        return response()->json([
+            'success' => true,
+            'cart' => $cart,
+            'total' => array_sum(array_column($cart, 'subtotal'))
+        ]);
+    }
+
+    /**
+     * Remove item from cart.
+     */
+    public function removeFromCart($productId)
+    {
+        $cart = session()->get('cart', []);
+
+        if (isset($cart[$productId])) {
+            unset($cart[$productId]);
+            session()->put('cart', $cart);
+        }
+
+        return response()->json([
+            'success' => true,
+            'cart' => $cart,
+            'total' => array_sum(array_column($cart, 'subtotal'))
+        ]);
+    }
+
+    /**
+     * Clear entire cart.
+     */
+    public function clearCart()
+    {
+        session()->forget('cart');
+
+        return response()->json(['success' => true]);
+    }
+
+    /**
+     * Display transaction details.
+     */
+    public function show(Transaction $transaction)
+    {
+        $user = Auth::user();
+
+        // Check access
+        if (!$user->hasRole('owner') && $transaction->branch_id != $user->branch_id) {
+            abort(403, 'Anda tidak memiliki akses ke transaksi ini');
+        }
+
+        $transaction->load(['details.product', 'cashier', 'branch']);
+
+        return view('transactions.show', compact('transaction'));
+    }
+
+    /**
+     * Print transaction receipt.
+     */
+    public function print(Transaction $transaction)
+    {
+        $user = Auth::user();
+
+        // Check access
+        if (!$user->hasRole('owner') && $transaction->branch_id != $user->branch_id) {
+            abort(403);
+        }
+
+        $transaction->load(['details.product', 'cashier', 'branch']);
+
+        return view('transactions.print', compact('transaction'));
+    }
+
+    /**
+     * Cancel a transaction (soft delete).
+     */
+    public function cancel(Request $request, Transaction $transaction)
+    {
+        $user = Auth::user();
+
+        // Cek apakah request dari AJAX/JSON
+        $isAjax = $request->ajax() || $request->expectsJson();
+
+        try {
+            // Check access
+            if (!$user->hasRole('owner') && $transaction->branch_id != $user->branch_id) {
+                if ($isAjax) {
+                    return response()->json(['error' => 'Anda tidak memiliki akses'], 403);
+                }
+                abort(403);
+            }
+
+            // Check if already cancelled
+            if ($transaction->status === 'cancelled') {
+                if ($isAjax) {
+                    return response()->json(['error' => 'Transaksi sudah dibatalkan sebelumnya'], 422);
+                }
+                return redirect()->back()->with('error', 'Transaksi sudah dibatalkan sebelumnya');
+            }
+
+            // Get cancel reason
+            if ($isAjax) {
+                $data = $request->json()->all();
+                $reason = $data['cancel_reason'] ?? null;
+            } else {
+                $reason = $request->input('cancel_reason');
+            }
+
+            // Validate reason
+            if (!$reason || strlen($reason) < 5) {
+                if ($isAjax) {
+                    return response()->json(['error' => 'Alasan pembatalan harus diisi minimal 5 karakter'], 422);
+                }
+                return redirect()->back()->with('error', 'Alasan pembatalan harus diisi minimal 5 karakter');
+            }
+
+            DB::beginTransaction();
+
+            // Restore stock for each product
+            foreach ($transaction->details as $detail) {
+                $product = $detail->product;
+                $product->updateStock(
+                    $detail->quantity,
+                    'in',
+                    $user->id,
+                    "Pembatalan transaksi: {$transaction->invoice_number} - Alasan: {$reason}"
+                );
+            }
+
+            // Update transaction status dan soft delete
+            $transaction->update([
+                'status' => 'cancelled',
+                'deleted_by' => $user->id,
+                'delete_reason' => $reason,
+            ]);
+
+            // INI YANG PENTING: Panggil method delete() untuk soft delete
+            $transaction->delete();  // <- Baris ini mengisi deleted_at
+
+            DB::commit();
+
+            if ($isAjax) {
+                return response()->json([
+                    'success' => true,
+                    'message' => "Transaksi {$transaction->invoice_number} berhasil dibatalkan"
+                ]);
+            }
+
+            return redirect()->route('transactions.index')
+                ->with('success', "Transaksi {$transaction->invoice_number} berhasil dibatalkan");
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            if ($isAjax) {
+                return response()->json([
+                    'success' => false,
+                    'error' => $e->getMessage()
+                ], 500);
+            }
+
+            return redirect()->back()
+                ->with('error', 'Gagal membatalkan transaksi: ' . $e->getMessage());
+        }
+    }
 }
