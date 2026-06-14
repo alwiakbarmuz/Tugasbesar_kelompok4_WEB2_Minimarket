@@ -8,17 +8,19 @@ use Illuminate\View\Component;
 
 class Card extends Component
 {
-    /**
-     * Create a new component instance.
-     */
-    public function __construct()
+    public $title;
+    public $subtitle;
+    public $padding;
+    public $shadow;
+
+    public function __construct($title = null, $subtitle = null, $padding = '6', $shadow = 'sm')
     {
-        //
+        $this->title = $title;
+        $this->subtitle = $subtitle;
+        $this->padding = $padding;
+        $this->shadow = $shadow;
     }
 
-    /**
-     * Get the view / contents that represent the component.
-     */
     public function render(): View|Closure|string
     {
         return view('components.card');

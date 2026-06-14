@@ -8,17 +8,15 @@ use Illuminate\View\Component;
 
 class TableRow extends Component
 {
-    /**
-     * Create a new component instance.
-     */
-    public function __construct()
+    public $hover;
+    public $border;
+
+    public function __construct($hover = true, $border = true)
     {
-        //
+        $this->hover = $hover;
+        $this->border = $border;
     }
 
-    /**
-     * Get the view / contents that represent the component.
-     */
     public function render(): View|Closure|string
     {
         return view('components.table-row');

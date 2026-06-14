@@ -8,17 +8,23 @@ use Illuminate\View\Component;
 
 class StatCard extends Component
 {
-    /**
-     * Create a new component instance.
-     */
-    public function __construct()
+    public $title;
+    public $value;
+    public $icon;
+    public $color;
+    public $trend;
+    public $trendValue;
+
+    public function __construct($title, $value, $icon, $color = 'blue', $trend = null, $trendValue = null)
     {
-        //
+        $this->title = $title;
+        $this->value = $value;
+        $this->icon = $icon;
+        $this->color = $color;
+        $this->trend = $trend;
+        $this->trendValue = $trendValue;
     }
 
-    /**
-     * Get the view / contents that represent the component.
-     */
     public function render(): View|Closure|string
     {
         return view('components.stat-card');
