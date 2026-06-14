@@ -1,3 +1,5 @@
-<div>
-    <!-- Nothing in life is to be feared, it is only to be understood. Now is the time to understand more, so that we may fear less. - Maria Skłodowska-Curie -->
-</div>
+@props(['hover' => true, 'border' => true])
+
+<tr {{ $attributes->merge(['class' => ($hover ? 'hover:bg-gray-50 ' : '') . ($border ? 'border-b ' : '')]) }}>
+    {{ $slot }}
+</tr>

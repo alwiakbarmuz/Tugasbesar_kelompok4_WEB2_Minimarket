@@ -8,17 +8,23 @@ use Illuminate\View\Component;
 
 class Textarea extends Component
 {
-    /**
-     * Create a new component instance.
-     */
-    public function __construct()
+    public $name;
+    public $id;
+    public $label;
+    public $rows;
+    public $placeholder;
+    public $required;
+
+    public function __construct($name, $id = null, $label = null, $rows = 3, $placeholder = null, $required = false)
     {
-        //
+        $this->name = $name;
+        $this->id = $id ?? $name;
+        $this->label = $label;
+        $this->rows = $rows;
+        $this->placeholder = $placeholder;
+        $this->required = $required;
     }
 
-    /**
-     * Get the view / contents that represent the component.
-     */
     public function render(): View|Closure|string
     {
         return view('components.form.textarea');

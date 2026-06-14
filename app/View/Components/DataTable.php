@@ -8,17 +8,15 @@ use Illuminate\View\Component;
 
 class DataTable extends Component
 {
-    /**
-     * Create a new component instance.
-     */
-    public function __construct()
+    public $headers;
+    public $actions;
+
+    public function __construct($headers = [], $actions = false)
     {
-        //
+        $this->headers = $headers;
+        $this->actions = $actions;
     }
 
-    /**
-     * Get the view / contents that represent the component.
-     */
     public function render(): View|Closure|string
     {
         return view('components.data-table');
